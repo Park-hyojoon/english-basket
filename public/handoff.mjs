@@ -11,13 +11,23 @@ export const CONTEXTS = [
   ['home', '집에 돌아와 발견한 문제', '예약한 수리가 제대로 끝나지 않았어요. 문제와 원하는 해결 방법을 차분히 설명해 보세요.']
 ];
 
+export function chooseContext(state, expressions, random=Math.random) {
+  const previous=[...state.sessions,...state.reviews.filter(r=>r.at&&r.context)].sort((a,b)=>b.at.localeCompare(a.at))[0]?.context;
+  const scored=CONTEXTS.filter(c=>c[0]!==previous).map(context=>({context,uses:expressions.reduce((n,e)=>n+(e.evidence||[]).filter(v=>v.result==='success'&&v.context===context[0]).length,0)}));
+  const least=Math.min(...scored.map(c=>c.uses));
+  const choices=scored.filter(c=>c.uses===least);
+  return choices[Math.floor(random()*choices.length)].context;
+}
+
 export function prepareHandoff(state, kind = 'chat', random = Math.random) {
   if (!['chat', 'test'].includes(kind)) throw Error('대화 종류를 확인해 주세요.');
   if (!state.expressions.length) throw Error('먼저 바구니에 영어를 담아 주세요.');
-  const contextIndex = Math.floor(random() * CONTEXTS.length);
-  const context = CONTEXTS[contextIndex];
-  const expressions = selectMix(state.expressions, 5, random).map(e => ({
-    id: e.id, text: e.text, meaning: e.meaning, stage: stage(e), status: STATUS[status(e)]
+  const selected=selectMix(state.expressions,5,random);
+  const context=chooseContext(state,selected,random);
+  const contextIndex=CONTEXTS.findIndex(c=>c[0]===context[0]);
+  const expressions = selected.map(e => ({
+    id: e.id, text: e.text, meaning: e.meaning, stage: stage(e), status: STATUS[status(e)],
+    lastResult:[...(e.evidence||[])].sort((a,b)=>a.at.localeCompare(b.at)).at(-1)?.result||null
   }));
   return {
     format: 'english-basket-handoff-v1', id: crypto.randomUUID(), kind,
@@ -26,8 +36,9 @@ export function prepareHandoff(state, kind = 'chat', random = Math.random) {
     scenes: Array.from({length: kind === 'test' ? 3 : 1}, (_, i) => CONTEXTS[(contextIndex + i) % CONTEXTS.length][2]),
     expressions, expressionIds: expressions.map(e => e.id),
     reviews: state.reviews.filter(r => typeof r.answer === 'string' && r.answer.trim()).slice(-3).map(r => ({
-      kind: r.kind, prompt: r.prompt || '', answer: r.answer.slice(0,2000), day: r.day
+      kind: r.kind, prompt: (r.prompt || '').slice(0,400), answer: r.answer.slice(0,1000), day: r.day
     })),
+    corrections:[...state.sessions].sort((a,b)=>b.at.localeCompare(a.at)).filter(s=>s.results.some(r=>selected.some(e=>e.id===r.id))).flatMap(s=>s.corrections).slice(0,2),
     resultDraft: '', durationMinutes: ''
   };
 }
@@ -42,11 +53,12 @@ export function buildPrompt(session) {
   const materials = {
     sessionId: session.id, level: session.level,
     goal: LEVEL_GOALS[session.level-1], scenes: session.scenes,
-    expressions: session.expressions, recentPractice: session.reviews
+    expressions: session.expressions, recentPractice: session.reviews, recentCorrections:session.corrections||[]
   };
   return `내 영어 학습 자료입니다. 이 채팅에서 음성 대화를 하겠습니다. 먼저 "준비됐어요. 음성 모드를 켜고 시작해 주세요."라고만 답하세요.
 내가 시작하면 ${session.kind==='test'?'서로 다른 세 장면으로 미니 테스트를 해 주세요. 힌트나 예시 답은 주지 마세요.':'1분 이상 편안하게 대화해 주세요. 힌트는 요청할 때만 주세요.'} 짧은 영어 질문 하나씩 묻고 내 답을 기다리세요.
 어른의 실제 생활·감정·걱정·계절 변화 등을 다루고 식상한 취향 질문은 피하세요. 영어 난이도만 Level ${session.level}/6에 맞추세요. 새·과거 표현을 자연스럽게 섞고 대화 중 문법 교정으로 끊지 마세요.
+자료의 장면에서 lastResult가 help/unused인 표현과 직전 교정을 다시 써볼 기회를 주세요. 답을 먼저 알려주지 말고 같은 표현을 다른 문장에 조합하게 도와주세요.
 내가 "Basket 결과를 주세요"라고 하면 한국어 요약과 실제 핵심 교정 최대 2개를 알려주고 아래 형식의 JSON을 코드 상자 하나에 주세요. 시간은 추측하지 마세요.
 평가는 이번 대화에서 내가 말한 것만 근거로 하세요. 전달 자료의 연습이나 당신이 말한 예시는 성공으로 세지 마세요. 의미가 맞는 활용형은 인정하세요. success=도움 없이 정확히 사용, help=도움받거나 잘못 사용, unused=미사용. 확신이 없으면 success로 추정하지 마세요. 모든 표현 ID를 한 번씩 포함하세요.
 completedScenes=답변을 마친 장면 수. passed=${session.kind==='test'?'세 장면 모두 현재 목표를 충족하고 두 표현 이상 독립 사용하며 의미를 막는 오류가 없을 때만 true':'항상 false'}. corrections=원문→수정문과 짧은 설명, 오류가 없으면 [].

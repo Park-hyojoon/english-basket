@@ -1,27 +1,54 @@
 export const STATUS = ['새 표현', '익숙해지는 중', '내 것이 된 표현'];
 export const STAGES = ['읽어서 이해', '도움받아 사용', '도움 없이 사용', '다른 상황에서 사용', '며칠 뒤에도 사용'];
+const DAY_FORMAT=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'});
 export function day(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul', year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+  return DAY_FORMAT.format(date);
 }
 export const emptyState = () => ({version:1, expressions:[], sessions:[], reviews:[], level:1, settings:{chatUrl:'https://chatgpt.com/'}});
+const INTERVALS = [1, 3, 7, 14, 30];
+const orderedEvidence = e => [...(e.evidence || [])].sort((a,b)=>a.at.localeCompare(b.at));
+
+// Dates are derived from evidence so merged backups get the same schedule.
+export function reviewSchedule(expression) {
+  const evidence=orderedEvidence(expression);
+  let successfulDays=new Set(), lastSuccess=null, latest=null;
+  for(const event of evidence) {
+    if(event.result==='help') successfulDays=new Set();
+    if(event.result==='success') {successfulDays.add(day(new Date(event.at)));lastSuccess=event.at;}
+    latest=event;
+  }
+  const intervalDays=latest?.result==='success'?INTERVALS[Math.min(Math.max(successfulDays.size-1,0),INTERVALS.length-1)]:1;
+  const due=latest?day(new Date(Date.parse(latest.at)+intervalDays*86400000)):(expression.due||day(new Date(expression.createdAt)));
+  return {due,intervalDays,lastSuccess,lastResult:latest?.result||null,lastAt:latest?.at||null};
+}
+
 export function stage(expression) {
-  const ev = expression.evidence || [];
-  const successes = ev.filter(e => e.result === 'success');
-  if(successes.length && new Set(successes.map(e=>e.context)).size >= 2 && successes.some(a=>successes.some(b=>new Date(b.at)-new Date(a.at)>=3*86400000))) return 5;
-  if(new Set(successes.map(e=>e.context)).size >= 2) return 4;
+  const ev = orderedEvidence(expression);
+  const failedAt=ev.findLastIndex(e=>e.result==='help');
+  const successes = ev.slice(failedAt+1).filter(e => e.result === 'success');
+  const differentContexts=new Set(successes.map(e=>e.context)).size>=2;
+  if(differentContexts&&Date.parse(successes.at(-1).at)-Date.parse(successes[0].at)>=3*86400000)return 5;
+  if(differentContexts)return 4;
   if(successes.length) return 3;
   if(ev.some(e=>e.result==='help')) return 2;
   return expression.understood ? 1 : 0;
 }
 export const status = e => stage(e)===5 ? 2 : stage(e)>=2 ? 1 : 0;
-export function selectMix(expressions, count=5, random=Math.random) {
-  const shuffle = xs => xs.map(x=>({x,r:random()})).sort((a,b)=>a.r-b.r).map(a=>a.x);
+export function selectMix(expressions, count=5, random=Math.random, now=new Date()) {
+  const today=day(now);
+  const candidates=expressions.map(e=>({e,category:status(e),schedule:reviewSchedule(e),random:random()}));
+  const ranked=[...candidates].sort((a,b)=>a.schedule.due.localeCompare(b.schedule.due)||Number(b.schedule.lastResult==='help')-Number(a.schedule.lastResult==='help')||a.random-b.random);
+  const due=ranked.filter(x=>x.schedule.due<=today),future=ranked.filter(x=>x.schedule.due>today);
   const selected=[];
   const quotas=[Math.ceil(count*.5),Math.floor(count*.3),Math.floor(count*.2)];
-  const priority = xs => shuffle(xs).sort((a,b)=>(a.due||'').localeCompare(b.due||''));
-  for(let s=0;s<3;s++) selected.push(...priority(expressions.filter(e=>status(e)===s)).slice(0,quotas[s]));
-  selected.push(...priority(expressions.filter(e=>!selected.some(a=>a.id===e.id))).slice(0,count-selected.length));
-  return selected.slice(0,count);
+  for(let s=0;s<3;s++) {
+    const bucket=due.filter(x=>x.category===s);
+    // Give one of today's new expressions a place without burying older reviews.
+    if(s===0&&count>1){const fresh=bucket.findIndex(x=>day(new Date(x.e.createdAt))===today&&!x.schedule.lastAt);if(fresh>0)bucket.unshift(...bucket.splice(fresh,1));}
+    selected.push(...bucket.slice(0,quotas[s]));
+  }
+  for(const x of [...due,...future])if(selected.length<count&&!selected.some(v=>v.e.id===x.e.id))selected.push(x);
+  return selected.slice(0,count).map(x=>x.e);
 }
 export function applyEvaluation(state, session, evaluation) {
   if(state.sessions.some(s=>s.id===session.id)) return state;
@@ -31,10 +58,11 @@ export function applyEvaluation(state, session, evaluation) {
   const revived=[];
   for(const r of results) {
     const e=state.expressions.find(e=>e.id===r.id);
-    if(r.result==='success' && new Date(at)-new Date(e.lastSuccess||e.createdAt)>=7*86400000) revived.push(e.id);
+    if(r.result==='success' && new Date(at)-new Date(reviewSchedule(e).lastSuccess||e.createdAt)>=7*86400000) revived.push(e.id);
     e.evidence.push({at,result:r.result,context:session.context});
-    if(r.result==='success') e.lastSuccess=at;
-    e.due=day(new Date(new Date(at).getTime()+(r.result==='success'?3:1)*86400000));
+    const schedule=reviewSchedule(e);
+    e.lastSuccess=schedule.lastSuccess;
+    e.due=schedule.due;
   }
   state.sessions.push({...session,day:today,results,revived,corrections:evaluation.corrections.slice(0,2),summary:evaluation.summary,passed:session.kind==='test'&&evaluation.passed});
   if(session.kind==='test'&&evaluation.passed&&(session.level===undefined||session.level===state.level)) state.level=Math.min(6,state.level+1);
@@ -67,6 +95,7 @@ export function mergeState(current, imported) {
     if(!existing) result.expressions.push(e);
     else {existing.evidence=Array.from(new Map([...existing.evidence,...e.evidence].map(v=>[v.at+'|'+v.context+'|'+v.result,v])).values()).sort((a,b)=>a.at.localeCompare(b.at));existing.understood ||= e.understood;}
   }
+  for(const expression of result.expressions){const schedule=reviewSchedule(expression);expression.due=schedule.due;expression.lastSuccess=schedule.lastSuccess;}
   result.sessions=Array.from(new Map([...imported.sessions,...result.sessions].map(s=>[s.id,s])).values());
   result.reviews=Array.from(new Map([...imported.reviews,...result.reviews].map(s=>[s.id,s])).values());
   result.level=Math.max(current.level,imported.level);

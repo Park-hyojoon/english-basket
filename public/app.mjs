@@ -1,9 +1,10 @@
 import {emptyState,day,STATUS,STAGES,stage,status,selectMix,applyEvaluation,metrics,mergeState,validateState} from './domain.mjs';
-import {LEVEL_NAMES,CONTEXTS,prepareHandoff,buildPrompt,parseReport,parseMinutes,validateChatUrl} from './handoff.mjs';
+import {LEVEL_NAMES,CONTEXTS,chooseContext,prepareHandoff,buildPrompt,parseReport,parseMinutes,validateChatUrl} from './handoff.mjs';
 const KEY='english-basket-v1', PENDING_KEY='english-basket-handoff-v1';
 const RESULT_NAMES={success:'사용 성공',help:'도움 필요',unused:'미사용'};
 let state=emptyState(),view='today',filter='all',query='',active=null,report=null,exercise=null,installPrompt=null;
 let storageError=false,initialWarning='';
+let reviewCards=null;
 try {
   const raw=localStorage.getItem(KEY);if(raw)state=validateState(JSON.parse(raw));
   state.settings={chatUrl:state.settings?.chatUrl||'https://chatgpt.com/'};
@@ -21,7 +22,7 @@ const levelNames=LEVEL_NAMES,contexts=CONTEXTS;
 function notify(message){const el=document.querySelector('#notice');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),5000);}
 function changeState(change){if(storageError)throw Error('먼저 설정에서 기존 저장 파일을 백업하고 복원해 주세요.');const next=structuredClone(state);change(next);localStorage.setItem(KEY,JSON.stringify(next));state=next;}
 function persistActive(){if(active)localStorage.setItem(PENDING_KEY,JSON.stringify(active));else localStorage.removeItem(PENDING_KEY);}
-function navigate(next){if(next==='talk'&&state.expressions.length&&(!active||state.sessions.some(s=>s.id===active.id))){active=prepareHandoff(state);report=null;persistActive();}view=next;render();window.scrollTo(0,0);}
+function navigate(next){if(next==='review')reviewCards=selectMix(state.expressions,5);if(next==='talk'&&state.expressions.length&&(!active||state.sessions.some(s=>s.id===active.id))){active=prepareHandoff(state);report=null;persistActive();}view=next;render();window.scrollTo(0,0);}
 function expressionCard(e,controls=false){return `<div class="expression"><div class="flex"><strong>${esc(e.text)}</strong><span class="badge ${status(e)===0?'gold':''}">${STATUS[status(e)]}</span></div><p>${esc(e.meaning||'뜻이나 나만의 메모를 추가해 보세요.')}</p><div class="progress"><i style="width:${stage(e)*20}%"></i></div><div class="muted">${stage(e)}/5 · ${stage(e)?STAGES[stage(e)-1]:'아직 첫 만남'}</div>${controls?`<div class="flex" style="margin-top:12px"><button class="small secondary" data-action="edit" data-id="${esc(e.id)}">수정</button><button class="small ghost" data-action="remove" data-id="${esc(e.id)}">삭제</button></div>`:''}</div>`;}
 function header(title,description='') {
   return `<h1>${title}</h1>${description?`<p class="muted">${description}</p>`:''}`;
@@ -56,7 +57,7 @@ function basketPage() {
 function reviewPage() {
   return `${header('복습')}<section class="card"><div class="flex">${['말하기','짧은 글쓰기','문장 변형','상황 대응'].map(mode=>`<button class="secondary" data-action="exercise" data-mode="${mode}">${mode}</button>`).join('')}</div>
     ${exercise?`<div style="margin-top:24px"><span class="badge">${esc(exercise.context[1])}</span><h2 style="margin-top:16px">${esc(exercise.prompt)}</h2><p class="muted">${exercise.expressions.map(e=>esc(e.text)).join(' · ')}</p><label for="practice-answer">나의 영어</label><textarea id="practice-answer" maxlength="4000" placeholder="한 문장부터 써 보세요.">${esc(exercise.answer||'')}</textarea><div class="flex" style="margin-top:14px"><button data-action="practice-submit" ${exercise.feedback?'disabled':''}>기록하기</button><button class="ghost" data-action="read-answer">들어보기</button>${exercise.feedback?'<button class="secondary" data-view="talk">ChatGPT로 가져가기 →</button>':''}</div>${exercise.feedback?`<p class="muted" style="margin-top:12px">${esc(exercise.feedback)}</p>`:''}</div>`:'<div class="empty">어떤 연습을 해 볼까요?</div>'}</section>
-    <section class="card"><h2>다시 꺼내 보기</h2>${selectMix(state.expressions,5).map(e=>`<div class="expression"><strong>${esc(e.text)}</strong><details><summary>뜻 보기</summary><p>${esc(e.meaning||'메모 없음')}</p></details><button class="small secondary" data-action="understand" data-id="${esc(e.id)}">${e.understood?'✓ 기억나요':'기억나요'}</button></div>`).join('')}</section>`;
+    <section class="card"><h2>다시 꺼내 보기</h2>${(reviewCards||=selectMix(state.expressions,5)).map(e=>`<div class="expression"><strong>${esc(e.text)}</strong><details><summary>뜻 보기</summary><p>${esc(e.meaning||'메모 없음')}</p></details><button class="small secondary" data-action="understand" data-id="${esc(e.id)}">${e.understood?'✓ 기억나요':'기억나요'}</button></div>`).join('')}</section>`;
 }
 
 
@@ -113,9 +114,10 @@ function prepare(kind) {
 function createExercise(mode) {
   if(!state.expressions.length)throw Error('먼저 바구니에 영어를 담아 주세요.');
   if(exercise?.answer&&!exercise.feedback&&!confirm('아직 기록하지 않은 연습을 새 문제로 바꿀까요?'))return;
-  const context=contexts[Math.floor(Math.random()*contexts.length)];
+  const chosenExpressions=selectMix(state.expressions,5);
+  const context=chooseContext(state,chosenExpressions);
   const task={말하기:'표현 한 개를 골라 소리 내어 말하고 말한 문장을 적어 보세요.','짧은 글쓰기':'표현 두 개를 골라 생각과 이유를 짧은 글로 써 보세요.','문장 변형':'이 상황에서 쓴 문장을 일이 내일 일어날 때와 어제 일어났을 때로 바꿔 보세요.','상황 대응':'상대방에게 정중하게 답할 문장을 써 보세요.'}[mode];
-  exercise={id:uid(),mode,context,expressions:selectMix(state.expressions,5),prompt:context[2]+' '+task,hint:'생각 → 이유 → 다음 행동의 순서로 시작해 보세요.',answer:'',feedback:null};render();
+  exercise={id:uid(),mode,context,expressions:chosenExpressions,prompt:context[2]+' '+task,hint:'생각 → 이유 → 다음 행동의 순서로 시작해 보세요.',answer:'',feedback:null};render();
 }
 
 function speak(text) {
@@ -132,9 +134,9 @@ document.addEventListener('click',async event=>{
     const action=el.dataset.action,id=el.dataset.id;
     if(action==='edit'){const e=state.expressions.find(e=>e.id===id),text=prompt('영어',e.text);if(text===null)return;if(!text.trim()||text.length>500)throw Error('1~500자 영어를 입력해 주세요.');const meaning=prompt('뜻 또는 쓰고 싶은 상황',e.meaning);if(meaning===null)return;changeState(s=>{const item=s.expressions.find(e=>e.id===id);item.text=text.trim();item.meaning=meaning.slice(0,1000);});render();}
     if(action==='remove'){if(active?.expressionIds.includes(id)&&!state.sessions.some(s=>s.id===active.id))throw Error('대화 자료에 담긴 표현은 결과 기록 후 삭제해 주세요.');if(confirm('이 영어를 삭제할까요? 기존 대화 기록은 유지됩니다.')){changeState(s=>{s.expressions=s.expressions.filter(e=>e.id!==id);});render();}}
-    if(action==='understand'){changeState(s=>{s.expressions.find(e=>e.id===id).understood=true;s.reviews.push({id:uid(),day:day(),expressionId:id,kind:'understand'});});render();}
+    if(action==='understand'){changeState(s=>{s.expressions.find(e=>e.id===id).understood=true;s.reviews.push({id:uid(),day:day(),expressionId:id,kind:'understand'});});reviewCards=reviewCards?.map(e=>state.expressions.find(item=>item.id===e.id)||e);render();}
     if(action==='exercise')createExercise(el.dataset.mode);
-    if(action==='practice-submit'){const answer=document.querySelector('#practice-answer').value.trim();if(!answer)throw Error('나의 영어를 한 문장 적어 주세요.');changeState(s=>{const saved={id:exercise.id,day:day(),kind:exercise.mode,prompt:exercise.prompt,answer,expressionIds:exercise.expressions.map(e=>e.id)};const i=s.reviews.findIndex(r=>r.id===exercise.id);if(i<0)s.reviews.push(saved);else s.reviews[i]=saved;});exercise.answer=answer;exercise.feedback='✓ 연습을 기록했어요.';render();}
+    if(action==='practice-submit'){const answer=document.querySelector('#practice-answer').value.trim();if(!answer)throw Error('나의 영어를 한 문장 적어 주세요.');changeState(s=>{const saved={id:exercise.id,day:day(),at:new Date().toISOString(),context:exercise.context[0],kind:exercise.mode,prompt:exercise.prompt,answer,expressionIds:exercise.expressions.map(e=>e.id)};const i=s.reviews.findIndex(r=>r.id===exercise.id);if(i<0)s.reviews.push(saved);else s.reviews[i]=saved;});exercise.answer=answer;exercise.feedback='✓ 연습을 기록했어요.';render();}
     if(action==='read-answer')speak(document.querySelector('#practice-answer').value);
     if(action==='start-chat'||action==='start-test')prepare(action==='start-test'?'test':'chat');
     if(action==='new-handoff'){if(!state.sessions.some(s=>s.id===active.id)&&!confirm('기록하지 않은 자료와 결과 입력을 새로 준비할까요?'))return;const kind=active.kind;active=null;persistActive();prepare(kind);}
