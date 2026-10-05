@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+node_modules/
+backups/
+*.log
+learning-state*.json
+english-basket-*.json
