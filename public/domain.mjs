@@ -3,7 +3,7 @@ export const STAGES = ['읽어서 이해', '도움받아 사용', '도움 없이
 export function day(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul', year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 }
-export const emptyState = () => ({version:1, expressions:[], sessions:[], reviews:[], level:1, settings:{endpoint:'',token:'',sound:true}});
+export const emptyState = () => ({version:1, expressions:[], sessions:[], reviews:[], level:1, settings:{chatUrl:'https://chatgpt.com/'}});
 export function stage(expression) {
   const ev = expression.evidence || [];
   const successes = ev.filter(e => e.result === 'success');
@@ -37,12 +37,12 @@ export function applyEvaluation(state, session, evaluation) {
     e.due=day(new Date(new Date(at).getTime()+(r.result==='success'?3:1)*86400000));
   }
   state.sessions.push({...session,day:today,results,revived,corrections:evaluation.corrections.slice(0,2),summary:evaluation.summary,passed:session.kind==='test'&&evaluation.passed});
-  if(session.kind==='test'&&evaluation.passed) state.level=Math.min(6,state.level+1);
+  if(session.kind==='test'&&evaluation.passed&&(session.level===undefined||session.level===state.level)) state.level=Math.min(6,state.level+1);
   return state;
 }
 export function metrics(state, now=new Date()) {
   const sessions=state.sessions.filter(s=>s.kind==='chat');
-  const days=new Set(sessions.filter(s=>s.seconds>=60&&s.messages.some(m=>m.role==='user')).map(s=>s.day));
+  const days=new Set(sessions.filter(s=>s.seconds>=60&&(s.confirmed===true||s.messages.some(m=>m.role==='user'))).map(s=>s.day));
   let cursor=new Date(now), streak=0;
   if(!days.has(day(cursor))) cursor=new Date(cursor.getTime()-86400000);
   while(days.has(day(cursor))) {streak++;cursor=new Date(cursor.getTime()-86400000);}

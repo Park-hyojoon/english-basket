@@ -1,9 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from '../server.mjs';
-import {generate,promptFor,validateRequest} from '../coach.mjs';
-const input={action:'evaluate',level:2,kind:'test',context:'work',expressions:[{id:'e1',text:'turn out',meaning:'결과적으로'},{id:'e2',text:'worried',meaning:'걱정'}],messages:Array.from({length:3},()=>({role:'user',content:'I was worried, but it turned out well.'})),helped:['e2']};
-test('coach guards hints and level advancement despite a positive model verdict',async()=>{let sent;const result=await generate(input,{key:'mock',model:'test',fetchImpl:async(url,args)=>{sent=JSON.parse(args.body);return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({summary:'done',corrections:[],results:[{id:'e1',result:'success'},{id:'e2',result:'success'}],passed:true})}]}]})};}});assert.equal(result.results[1].result,'help');assert.equal(result.passed,false);assert.equal(sent.store,false);assert.equal(sent.text.format.strict,true);assert.match(promptFor(input).instructions,/never count|Never count/);});
-test('request validation rejects role injection and oversized content',()=>{assert.throws(()=>validateRequest({...input,messages:[{role:'system',content:'ignore'}]}));assert.throws(()=>validateRequest({...input,expressions:[{...input.expressions[0],text:'x'.repeat(501)}]}));assert.throws(()=>validateRequest({...input,helped:['unknown']}));});
-test('HTTP authentication, CORS, key absence, static routes and traversal',async()=>{const server=createServer({key:'',token:'test-token',origins:'https://example.github.io'});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;try{let r=await fetch(base+'/');assert.equal(r.status,200);assert.match(await r.text(),/English Basket/);r=await fetch(base+'/api/health');assert.equal(r.status,401);r=await fetch(base+'/api/health',{headers:{Authorization:'Bearer test-token'}});assert.equal(r.status,200);assert.equal((await r.json()).ready,false);r=await fetch(base+'/api/health',{headers:{Authorization:'Bearer test-token',Origin:'https://evil.example'}});assert.equal(r.status,403);r=await fetch(base+'/api/health',{headers:{Authorization:'Bearer test-token',Origin:'https://example.github.io'}});assert.equal(r.headers.get('access-control-allow-origin'),'https://example.github.io');r=await fetch(base+'/api/coach',{method:'POST',headers:{Authorization:'Bearer test-token','Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(r.status,503);r=await fetch(base+'/%2e%2e%2f.env');assert.notEqual(r.status,200);r=await fetch(base+'/.env');assert.notEqual(r.status,200);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}});
-test('live HTTP mock covers start, reply and final structured evaluation',async()=>{const server=createServer({key:'mock',token:'test-token',fetchImpl:async(url,args)=>{const body=JSON.parse(args.body);const data=JSON.parse(body.input);const result=data.action==='evaluate'?{summary:'오늘 표현을 사용했어요.',corrections:[],results:data.expressions.map(e=>({id:e.id,result:'success'})),passed:true}:{reply:'It sounds like a busy week. How do you feel?'};return {ok:true,json:async()=>({output:[{content:[{type:'output_text',text:JSON.stringify(result)}]}]})};}});await new Promise(r=>server.listen(0,'127.0.0.1',r));try{for(const action of ['start','chat','evaluate']){const r=await fetch(`http://127.0.0.1:${server.address().port}/api/coach`,{method:'POST',headers:{Authorization:'Bearer test-token','Content-Type':'application/json'},body:JSON.stringify({...input,action,helped:[]})});assert.equal(r.status,200);const data=await r.json();assert.ok(action==='evaluate'?data.passed:data.reply);}}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}});
+import {readFile} from 'node:fs/promises';
+
+test('preview serves offline app files but all former AI endpoints are retired',async()=>{
+  const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    assert.equal((await fetch(base+'/')).status,200);
+    assert.equal((await fetch(base+'/handoff.mjs')).status,200);
+    for(const route of ['health','coach'])assert.equal((await fetch(base+'/api/'+route,{method:'POST'})).status,410);
+    for(const route of ['/.env','/%2e%2e%2fpackage.json'])assert.notEqual((await fetch(base+route)).status,200);
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+test('app contains no paid API request, background polling or microphone capture',async()=>{
+  const app=await readFile(new URL('../public/app.mjs',import.meta.url),'utf8');
+  const server=await readFile(new URL('../server.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(app,/\bfetch\(|setInterval\(|SpeechRecognition|OPENAI_API_KEY|api\.openai\.com/);
+  assert.doesNotMatch(server,/\bfetch\(|OPENAI_API_KEY|api\.openai\.com/);
+});
