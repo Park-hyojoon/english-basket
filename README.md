@@ -31,3 +31,5 @@ Level 화면에서도 같은 방식으로 미니 테스트를 준비합니다. G
 외부 UI 라이브러리와 빌드 단계 없이 동작합니다. 백그라운드 AI 요청·폴링·마이크 캡처가 없습니다. `public/domain.mjs`는 기록, `public/handoff.mjs`는 자료 전달·결과 검사, `public/app.mjs`는 화면을 담당합니다.
 
 검사: `node --test tests/*.test.mjs`. `main`에 push하면 검사 후 `public/`만 GitHub Pages로 배포합니다. 업데이트 후에는 온라인에서 한 번 새로고침하세요. 개인 백업과 인증 정보는 저장소에 올리지 않습니다.
+
+개발 폴더: `D:\00. 학습센터\02. English` (이전 이름: `English`). 화면 검사: `node tools/browser-check.mjs` — 설치된 Playwright와 Edge를 사용하며, 기본 실행은 화면 캡처를 남기지 않습니다. 필요할 때만 `BASKET_SCREENSHOTS=1`로 캡처를 저장합니다.

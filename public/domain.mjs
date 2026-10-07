@@ -33,7 +33,7 @@ export function stage(expression) {
   if(ev.some(e=>e.result==='help')) return 2;
   return expression.understood ? 1 : 0;
 }
-export const status = e => stage(e)===5 ? 2 : stage(e)>=2 ? 1 : 0;
+export const status = (e, currentStage=stage(e)) => currentStage===5 ? 2 : currentStage>=2 ? 1 : 0;
 export function selectMix(expressions, count=5, random=Math.random, now=new Date()) {
   const today=day(now);
   const candidates=expressions.map(e=>({e,category:status(e),schedule:reviewSchedule(e),random:random()}));
