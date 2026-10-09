@@ -147,7 +147,7 @@ document.addEventListener('submit',event=>{
     if(form.id==='record-form'){
       active.resultDraft=values.result;
       const evaluation=parseReport(values.result,active),seconds=parseMinutes(values.minutes),alreadySaved=state.sessions.some(s=>s.id===active.id),savedLevel=state.level;
-      changeState(s=>applyEvaluation(s,{id:active.id,kind:active.kind,level:active.level,at:new Date().toISOString(),preparedAt:active.at,context:active.context,expressionIds:active.expressionIds,expressionSnapshots:active.expressions,seconds:seconds??0,messages:[],confirmed:true,source:'chatgpt-return',durationSource:seconds===null?'not-recorded':'self-reported',completedScenes:evaluation.completedScenes},evaluation));
+      changeState(s=>applyEvaluation(s,{id:active.id,kind:active.kind,level:active.level,at:new Date().toISOString(),preparedAt:active.at,context:active.context,writingId:active.writingId||null,readingIds:active.readingIds||[],expressionIds:active.expressionIds,expressionSnapshots:active.expressions,seconds:seconds??0,messages:[],confirmed:true,source:'chatgpt-return',durationSource:seconds===null?'not-recorded':'self-reported',completedScenes:evaluation.completedScenes},evaluation));
       report=evaluation;render();notify(alreadySaved?'이미 기록한 결과예요.':state.level>savedLevel?'다음 Level로 올라갔어요. 오늘의 결과도 기록했어요.':'오늘의 대화 결과를 기록했어요.');
     }
   }catch(error){notify(error.name==='QuotaExceededError'?'저장 공간이 부족해요. 백업을 내려받아 주세요.':error.message);}
