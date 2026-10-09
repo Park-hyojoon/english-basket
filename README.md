@@ -1,4 +1,4 @@
-# English Basket
+# English Basket 2.0
 
 [앱 열기](https://park-hyojoon.github.io/english-basket/) · [소스](https://github.com/Park-hyojoon/english-basket)
 
@@ -14,6 +14,13 @@
 6. Basket의 **대화 후 기록**에 받은 결과를 붙여넣고 **기록하기**를 누릅니다. 대화 시간은 선택 입력입니다.
 
 Level 화면에서도 같은 방식으로 미니 테스트를 준비합니다. GPT가 돌려주는 결과 형식은 앱이 읽으며 사용자가 작성할 필요는 없습니다. ChatGPT의 이용 가능 여부와 한도는 기존 계정을 따릅니다. [공식 음성 안내](https://learn.chatgpt.com/docs/features/voice).
+
+## Writing Studio
+
+**작문 훈련 → 직접 작성 → GPT 첨삭받기 → 결과 가져오기 → 다시 쓰기 → 학습 완료**.
+최초 글을 보존하고, 영어/한국어·일반/주간·독립/도움받은 작문을 구별합니다. 독서 표현도 작문과 대화에 이어 쓸 수 있습니다. 성장 기록은 실제 평가만 사용하며 같은 조건으로 7/30/90일을 비교합니다.
+
+[간단한 사용법](docs/usage.md) · [평가 기준](docs/evaluation.md) · [디자인](docs/design-guide.md) · [저장·백업](docs/data-and-backup.md) · [검증 범위](docs/verification.md).
 
 ## 기록
 

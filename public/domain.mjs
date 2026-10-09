@@ -1,10 +1,9 @@
+import {day} from './dates.mjs';
+import {newStudio,validateStudio,mergeStudio} from './studio-domain.mjs';
+export {day} from './dates.mjs';
 export const STATUS = ['새 표현', '익숙해지는 중', '내 것이 된 표현'];
 export const STAGES = ['읽어서 이해', '도움받아 사용', '도움 없이 사용', '다른 상황에서 사용', '며칠 뒤에도 사용'];
-const DAY_FORMAT=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'});
-export function day(date = new Date()) {
-  return DAY_FORMAT.format(date);
-}
-export const emptyState = () => ({version:1, expressions:[], sessions:[], reviews:[], level:1, settings:{chatUrl:'https://chatgpt.com/'}});
+export const emptyState = () => ({version:1, expressions:[], sessions:[], reviews:[], level:1, settings:{chatUrl:'https://chatgpt.com/'},studio:newStudio()});
 const INTERVALS = [1, 3, 7, 14, 30];
 const orderedEvidence = e => [...(e.evidence || [])].sort((a,b)=>a.at.localeCompare(b.at));
 
@@ -85,6 +84,7 @@ export function validateState(s) {
     for(const ev of e.evidence) if(!['success','help','unused'].includes(ev.result)||typeof ev.context!=='string'||!Number.isFinite(Date.parse(ev.at))) throw Error('숙달 기록이 올바르지 않습니다.');
   }
   for(const x of s.sessions) if(typeof x.id!=='string'||!Number.isFinite(x.seconds)||x.seconds<0||!Array.isArray(x.results)||!Array.isArray(x.revived)||!Array.isArray(x.messages)||!Array.isArray(x.corrections)||!['chat','test'].includes(x.kind)||typeof x.day!=='string') throw Error('대화 기록이 올바르지 않습니다.');
+  validateStudio(s.studio);
   return s;
 }
 export function mergeState(current, imported) {
@@ -99,5 +99,6 @@ export function mergeState(current, imported) {
   result.sessions=Array.from(new Map([...imported.sessions,...result.sessions].map(s=>[s.id,s])).values());
   result.reviews=Array.from(new Map([...imported.reviews,...result.reviews].map(s=>[s.id,s])).values());
   result.level=Math.max(current.level,imported.level);
+  result.studio=mergeStudio(current.studio,imported.studio);
   return result;
 }

@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
+import {chromium,browserOptions} from './browser-runtime.mjs';
+import {createServer} from '../server.mjs';
+const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+const base=`http://127.0.0.1:${server.address().port}`;
+const browser=await chromium.launch(browserOptions),errors=[];
+const screenshot=process.env.BASKET_SCREENSHOTS==='1';if(screenshot)await mkdir('outputs',{recursive:true});
+try {
+  const context=await browser.newContext({viewport:{width:1280,height:960},permissions:['clipboard-read','clipboard-write']});
+  await context.route('https://chatgpt.com/**',route=>route.fulfill({status:200,body:'ChatGPT transfer fixture'}));
+  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
+  await page.goto(base);
+  const legacy={version:1,expressions:[{id:'e1',text:'a bit worried',meaning:'조금 걱정되는',createdAt:new Date().toISOString(),evidence:[],understood:false}],reviews:[{id:'old-review',kind:'짧은 글쓰기',answer:'My previous practice.',day:'2026-10-01'}],sessions:[],level:1,settings:{chatUrl:'https://chatgpt.com/'}};
+  await page.evaluate(data=>localStorage.setItem('english-basket-v1',JSON.stringify(data)),legacy);await page.reload();
+  await page.locator('.nav[data-view="writing"]').click();
+  assert.equal(await page.locator('[data-writing-expression="e1"]').isChecked(),true);
+  const original='I am a bit worried about tomorrow. I want to prepare calmly tonight.';
+  await page.locator('#writing-original').fill(original);await page.locator('#writing-provenance').selectOption('independent');
+  await page.reload();await page.locator('.nav[data-view="writing"]').click();assert.equal(await page.locator('#writing-original').inputValue(),original);
+  assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('english-basket-v1')).reviews),legacy.reviews);
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('english-basket-before-studio-v1')).expressions[0].text),'a bit worried');
+  await page.locator('[data-studio="save"]').click();assert.equal(await page.locator('#writing-original').getAttribute('readonly'),'');
+  const popupPromise=context.waitForEvent('page');await page.locator('[data-studio="feedback"]').click();const popup=await popupPromise;await popup.waitForURL('https://chatgpt.com/');await popup.close();await page.bringToFront();
+  assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/I am a bit worried/);
+  const result=await page.evaluate(async()=>{const {RUBRICS}=await import('./studio-domain.mjs');const s=JSON.parse(localStorage.getItem('english-basket-v1')),w=s.studio.writings[0],r=w.requests.at(-1);return {format:'english-basket-writing-report-v1',writingId:w.id,requestId:r.id,phase:r.phase,language:w.language,level:w.level,difficulty:w.difficulty,rubricVersion:r.rubricVersion,confidence:'high',strengths:['걱정과 준비를 연결했어요.'],improvements:[{area:'expression',original:'prepare calmly',suggestion:'차분한 준비를 구체화',reason:'자신의 뜻을 유지해요.'}],flow:'두 생각이 자연스럽게 이어져요.',errors:[{category:'expression',original:'prepare calmly',correction:'prepare for it calmly',explanation:'준비 대상을 명확히 해요.'}],revisedExample:'I am a bit worried about tomorrow. I want to prepare for it calmly tonight.',scores:Object.fromEntries(RUBRICS.en.areas.map(([id,,max])=>[id,max-3])),usedExpressionIds:['e1']};});
+  await page.locator('#writing-result').fill('{broken');await page.locator('[data-studio="import-feedback"]').click();assert.match(await page.locator('#notice').innerText(),/찾지 못/);assert.equal(await page.locator('#writing-original').inputValue(),original);
+  await page.locator('#writing-result').fill(JSON.stringify({...result,requestId:'wrong'}));await page.locator('[data-studio="import-feedback"]').click();assert.match(await page.locator('#notice').innerText(),/다른 글/);
+  await page.locator('#writing-result').fill('첨삭입니다.\n```json\n'+JSON.stringify(result)+'\n```');await page.locator('[data-studio="import-feedback"]').click();assert.match(await page.locator('.studio-feedback').innerText(),/걱정과 준비/);
+  const rewrite='I am a bit worried about tomorrow, so I will prepare for it calmly tonight.';await page.locator('#writing-rewrite').fill(rewrite);await page.locator('[data-studio="save-rewrite"]').click();assert.equal(await page.locator('#writing-original').inputValue(),original);assert.ok(await page.locator('mark').count()>0);
+  await page.locator('[data-studio="complete"]').click();assert.match(await page.locator('.success-message').innerText(),/학습을 기록/);
+  if(screenshot)await page.screenshot({path:'outputs/studio-feedback.png',fullPage:true});
+  await page.locator('#writing-language').selectOption('ko');await page.locator('#writing-original').fill('저녁 공기가 차가워졌다. 따뜻한 차를 마시며 하루를 정리했다.');await page.locator('#writing-provenance').selectOption('independent');await page.locator('[data-studio="save"]').click();assert.equal(await page.locator('[data-writing-expression]').count(),0);
+  await page.locator('#writing-language').selectOption('en');await page.locator('[data-studio="reading"]').click();await page.locator('#reading-book').fill('User book');await page.locator('#reading-location').fill('page 3');await page.locator('#reading-original').fill('I wanted to give it a try.');await page.locator('#reading-expression').fill('give it a try');await page.locator('#reading-meaning').fill('한번 시도해 보다');await page.locator('#reading-form button').click();
+  await page.getByText('Magic Tree House · User book page 3',{exact:false}).click();await page.locator('[data-studio="transform"]').click();assert.match(await page.locator('main').innerText(),/주어·시제·상황/);
+  await page.locator('#writing-original').fill('I wanted to give it a try. I felt a bit worried, but I kept going.');await page.locator('[data-writing-expression="e1"]').check();await page.locator('#writing-provenance').selectOption('independent');await page.locator('[data-studio="save"]').click();await page.locator('[data-studio="talk"]').click();assert.match(await page.locator('#handoff-text').inputValue(),/give it a try/);const active=await page.evaluate(()=>JSON.parse(localStorage.getItem('english-basket-handoff-v1')));assert.ok(active.writingId);assert.equal(active.readingIds.length,1);
+  await page.locator('.nav[data-view="growth"]').click();assert.match(await page.locator('.writing-growth').innerText(),/GPT 참고 평가/);await page.locator('#chart-period').selectOption('30');await page.getByText('날짜별 점수 · 세부 기록',{exact:true}).click();assert.equal(await page.locator('.chart-table tbody tr').count(),30);await page.locator('#chart-language').selectOption('ko');assert.match(await page.locator('.writing-growth').innerText(),/한국어/);
+  if(screenshot)await page.screenshot({path:'outputs/studio-growth.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});for(const v of ['writing','growth','today','basket','review','talk','level','settings']){await page.locator(`[data-view="${v}"]:visible`).first().click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),v+' fits mobile');}
+  await page.locator('.nav[data-view="writing"]').click();await page.locator('[data-studio="new"]').click();
+  await page.waitForFunction(()=>navigator.serviceWorker.controller);await context.setOffline(true);await page.locator('#writing-original').fill('My draft stays safe even without a connection.');await page.reload();await page.locator('.nav[data-view="writing"]').click();assert.equal(await page.locator('#writing-original').inputValue(),'My draft stays safe even without a connection.');
+  await page.locator('#writing-provenance').selectOption('independent');
+  await page.evaluate(()=>{window.originalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='english-basket-v1')throw new DOMException('Test quota','QuotaExceededError');return window.originalSetItem.call(this,key,value);};});
+  await page.locator('#writing-original').fill('My unsaved text must stay here if storage fails.');await page.locator('[data-studio="save"]').click();assert.match(await page.locator('#writing-save-status').innerText(),/保存|저장 실패/);assert.equal(await page.locator('#writing-original').inputValue(),'My unsaved text must stay here if storage fails.');await page.locator('.nav[data-view="today"]').click();assert.equal(await page.locator('#writing-original').count(),1);
+  await page.evaluate(()=>Storage.prototype.setItem=window.originalSetItem);await page.locator('[data-studio="save"]').click();await page.reload();await page.locator('.nav[data-view="writing"]').click();assert.equal(await page.locator('#writing-original').inputValue(),'My unsaved text must stay here if storage fails.');
+  assert.deepEqual(errors,[]);console.log('PASS: A–F writing, immutable original, GPT transfer/import guards, rewrite, reading links, EN/KO separation, growth, old data, mobile, offline drafts, storage-failure recovery.');
+}finally{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

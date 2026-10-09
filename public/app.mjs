@@ -1,5 +1,7 @@
 import {emptyState,day,STATUS,STAGES,stage,status,selectMix,applyEvaluation,metrics,mergeState,validateState} from './domain.mjs';
 import {LEVEL_NAMES,chooseContext,prepareHandoff,buildPrompt,parseReport,parseMinutes,validateChatUrl} from './handoff.mjs';
+import {newStudio} from './studio-domain.mjs';
+import {createStudioUI} from './studio-ui.mjs';
 const KEY='english-basket-v1', PENDING_KEY='english-basket-handoff-v1';
 const RESULT_NAMES={success:'사용 성공',help:'도움 필요',unused:'미사용'};
 let state=emptyState(),view='today',filter='all',query='',active=null,report=null,exercise=null,installPrompt=null;
@@ -7,6 +9,7 @@ let storageError=false,initialWarning='';
 let reviewCards=null;
 try {
   const raw=localStorage.getItem(KEY);if(raw)state=validateState(JSON.parse(raw));
+  state.studio ||= newStudio();
   state.settings={chatUrl:state.settings?.chatUrl||'https://chatgpt.com/'};
   try{state.settings.chatUrl=validateChatUrl(state.settings.chatUrl);}catch{state.settings.chatUrl='https://chatgpt.com/';}
   const pending=localStorage.getItem(PENDING_KEY);
@@ -17,25 +20,25 @@ try {
 } catch{storageError=true;initialWarning='기존 데이터를 읽지 못했습니다. 설정에서 원본 저장 파일을 백업하고 복원해 주세요. 기존 내용은 덮어쓰지 않습니다.';}
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID();
-const labels={today:['◌','오늘의 학습'],basket:['▤','내 바구니'],review:['↻','복습'],level:['✦','Level'],talk:['☏','1분 대화'],growth:['↗','성장 기록'],settings:['⚙','설정']};
+const labels={today:['◌','오늘의 학습'],basket:['▤','내 바구니'],review:['↻','복습'],writing:['✎','작문 훈련'],level:['✦','Level'],talk:['☏','1분 대화'],growth:['↗','성장 기록'],settings:['⚙','설정']};
 const DATE_FORMAT=new Intl.DateTimeFormat('ko-KR',{dateStyle:'long',timeZone:'Asia/Seoul'});
 function notify(message){const el=document.querySelector('#notice');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),5000);}
-function changeState(change){if(storageError)throw Error('먼저 설정에서 기존 저장 파일을 백업하고 복원해 주세요.');const next=structuredClone(state);change(next);localStorage.setItem(KEY,JSON.stringify(next));state=next;}
+function changeState(change){if(storageError)throw Error('먼저 설정에서 기존 저장 파일을 백업하고 복원해 주세요.');const next=structuredClone(state);change(next);const previous=localStorage.getItem(KEY);if(previous&&!JSON.parse(previous).studio&&!localStorage.getItem('english-basket-before-studio-v1'))localStorage.setItem('english-basket-before-studio-v1',previous);localStorage.setItem(KEY,JSON.stringify(next));state=next;}
 function persistActive(){if(active)localStorage.setItem(PENDING_KEY,JSON.stringify(active));else localStorage.removeItem(PENDING_KEY);}
-function navigate(next){if(next==='review')reviewCards=selectMix(state.expressions,5);if(next==='talk'&&state.expressions.length&&(!active||state.sessions.some(s=>s.id===active.id))){active=prepareHandoff(state);report=null;persistActive();}view=next;render();window.scrollTo(0,0);}
+function navigate(next){if(!studioUI.flush())return;if(next==='review')reviewCards=selectMix(state.expressions,5);if(next==='talk'&&state.expressions.length&&(!active||state.sessions.some(s=>s.id===active.id))){active=prepareHandoff(state);report=null;persistActive();}view=next;render();window.scrollTo(0,0);}
 function expressionCard(e,controls=false){const currentStage=stage(e),currentStatus=status(e,currentStage);return `<div class="expression"><div class="flex"><strong>${esc(e.text)}</strong><span class="badge ${currentStatus===0?'gold':''}">${STATUS[currentStatus]}</span></div><p>${esc(e.meaning||'뜻이나 나만의 메모를 추가해 보세요.')}</p><div class="progress"><i style="width:${currentStage*20}%"></i></div><div class="muted">${currentStage}/5 · ${currentStage?STAGES[currentStage-1]:'아직 첫 만남'}</div>${controls?`<div class="flex" style="margin-top:12px"><button class="small secondary" data-action="edit" data-id="${esc(e.id)}">수정</button><button class="small ghost" data-action="remove" data-id="${esc(e.id)}">삭제</button></div>`:''}</div>`;}
 function header(title,description='') {
   return `<h1>${title}</h1>${description?`<p class="muted">${description}</p>`:''}`;
 }
 
 function render() {
-  document.querySelector('#app').innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><img src="./icon.svg" alt="바구니">English Basket</div><nav>${Object.entries(labels).map(([key,[icon,label]])=>`<button class="nav ${view===key?'active':''}" data-view="${key}" ${view===key?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('')}</nav></aside><main class="main"><div class="topbar"><span>${DATE_FORMAT.format(new Date())}</span><div class="flex"><button class="pill ghost small" data-view="level">✦ Level ${state.level}</button><button class="pill ghost small" data-view="settings" aria-label="설정">⚙</button></div></div>${({today:todayPage,basket:basketPage,review:reviewPage,level:levelPage,talk:talkPage,growth:growthPage,settings:settingsPage}[view])()}</main></div>`;
+  document.querySelector('#app').innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><img src="./icon.svg" alt="바구니">English Basket</div><nav>${Object.entries(labels).map(([key,[icon,label]])=>`<button class="nav ${view===key?'active':''}" data-view="${key}" ${view===key?'aria-current="page"':''} ${key==='writing'?'aria-label="Writing Studio — 작문 훈련"':''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('')}</nav></aside><main class="main"><div class="topbar"><span>${DATE_FORMAT.format(new Date())}</span><div class="flex"><button class="pill ghost small" data-view="level">✦ Level ${state.level}</button><button class="pill ghost small" data-view="settings" aria-label="설정">⚙</button></div></div>${({today:todayPage,basket:basketPage,review:reviewPage,writing:studioUI.writingPage,level:levelPage,talk:talkPage,growth:growthPage,settings:settingsPage}[view])()}</main></div>`;
 }
 
 function todayPage() {
   const m=metrics(state),today=day(),todays=state.expressions.filter(e=>day(new Date(e.createdAt))===today);
   const steps=[['basket','영어 담기',todays.length>0],['review','섞어서 연습하기',state.reviews.some(r=>r.day===today)],['talk','ChatGPT에서 1분 대화',state.sessions.some(s=>s.kind==='chat'&&s.day===today)]];
-  return `<div class="hero"><div><h1>오늘의 영어 한 줌</h1><p class="muted">담고, 써보고, 1분만 말해요.</p></div><img src="./icon.svg" alt="웃는 바구니"><div class="flex"><button data-view="basket">+ 영어 담기</button><button class="ghost" data-view="talk">ChatGPT로 가져가기 →</button></div></div>
+  return `<div class="hero"><div><h1>오늘의 영어 한 줌</h1><p class="muted">담고, 써보고, 1분만 말해요.</p></div><img src="./icon.svg" alt="웃는 바구니"><div class="flex"><button data-view="basket">+ 영어 담기</button><button class="ghost" data-view="talk">ChatGPT로 가져가기 →</button><button class="secondary" data-view="writing">오늘의 작문 →</button></div></div>
     <div class="statgrid"><div class="stat"><strong>${state.expressions.length}</strong><small>모은 표현</small></div><div class="stat"><strong>${m.streak}일</strong><small>연속 1분 대화</small></div><div class="stat"><strong>${m.used}</strong><small>사용한 표현</small></div><div class="stat"><strong>${Math.floor(m.seconds/60)}분</strong><small>기록한 대화</small></div></div>
     <div class="grid"><section class="card"><h2>오늘 할 일</h2><div class="steps">${steps.map(([v,t,done],i)=>`<div class="step" role="button" tabindex="0" data-view="${v}"><span class="num">${done?'✓':i+1}</span><b>${t}</b><span class="arrow">→</span></div>`).join('')}</div></section><section class="card"><div class="card-header"><h2>오늘 담은 영어</h2><button class="small ghost" data-view="basket">전체 보기</button></div>${todays.length?todays.slice(-3).map(e=>expressionCard(e)).join(''):'<div class="empty">마음에 남은 영어를 담아 보세요.</div>'}</section></div>`;
 }
@@ -58,7 +61,7 @@ function levelPage() {
 
 function growthPage() {
   const m=metrics(state);
-  return `${header('성장 기록')}<div class="statgrid"><div class="stat"><strong>${m.streak}일</strong><small>연속 1분 대화</small></div><div class="stat"><strong>${Math.floor(m.seconds/60)}분</strong><small>기록한 대화</small></div><div class="stat"><strong>${m.used}</strong><small>사용한 표현</small></div><div class="stat"><strong>${m.revived}</strong><small>다시 쓴 과거 표현</small></div></div><div class="grid"><section class="card"><h2>다시 연습할 영어</h2>${m.weak.length?m.weak.slice(0,8).map(e=>expressionCard(e)).join(''):'<p class="muted">아직 없어요.</p>'}</section><section class="card"><h2>대화 기록</h2>${state.sessions.length?[...state.sessions].reverse().slice(0,20).map(s=>`<details class="expression"><summary>${esc(s.day)} · ${s.kind==='test'?'미니 테스트':'대화'}${s.durationSource==='not-recorded'?'':` · ${Math.round(s.seconds/6)/10}분`}</summary><p>${esc(s.summary)}</p><p class="muted">성공 ${s.results.filter(r=>r.result==='success').length} · 도움 ${s.results.filter(r=>r.result==='help').length} · 미사용 ${s.results.filter(r=>r.result==='unused').length}${s.kind==='test'?` · ${s.passed?'통과':'연습 중'}`:''}</p>${s.corrections.map(c=>`<p class="feedback">${esc(c)}</p>`).join('')}${s.messages.length?`<details><summary>대화 원문</summary>${s.messages.map(msg=>`<p class="muted">${esc(msg.content)}</p>`).join('')}</details>`:''}</details>`).join(''):'<p class="muted">대화 후 결과를 기록해 보세요.</p>'}</section></div><details class="card"><summary>기록 기준</summary><p class="muted">대화 시간은 직접 입력한 값입니다. 1분 이상 기록한 일반 대화로 연속일을 계산해요. 테스트와 시간 미입력 대화는 연속일에 포함하지 않아요.</p></details>`;
+  return `${header('성장 기록')}<div class="statgrid"><div class="stat"><strong>${m.streak}일</strong><small>연속 1분 대화</small></div><div class="stat"><strong>${Math.floor(m.seconds/60)}분</strong><small>기록한 대화</small></div><div class="stat"><strong>${m.used}</strong><small>사용한 표현</small></div><div class="stat"><strong>${m.revived}</strong><small>다시 쓴 과거 표현</small></div></div>${studioUI.growthSection()}<div class="grid"><section class="card"><h2>다시 연습할 영어</h2>${m.weak.length?m.weak.slice(0,8).map(e=>expressionCard(e)).join(''):'<p class="muted">아직 없어요.</p>'}</section><section class="card"><h2>대화 기록</h2>${state.sessions.length?[...state.sessions].reverse().slice(0,20).map(s=>`<details class="expression"><summary>${esc(s.day)} · ${s.kind==='test'?'미니 테스트':'대화'}${s.durationSource==='not-recorded'?'':` · ${Math.round(s.seconds/6)/10}분`}</summary><p>${esc(s.summary)}</p><p class="muted">성공 ${s.results.filter(r=>r.result==='success').length} · 도움 ${s.results.filter(r=>r.result==='help').length} · 미사용 ${s.results.filter(r=>r.result==='unused').length}${s.kind==='test'?` · ${s.passed?'통과':'연습 중'}`:''}</p>${s.corrections.map(c=>`<p class="feedback">${esc(c)}</p>`).join('')}${s.messages.length?`<details><summary>대화 원문</summary>${s.messages.map(msg=>`<p class="muted">${esc(msg.content)}</p>`).join('')}</details>`:''}</details>`).join(''):'<p class="muted">대화 후 결과를 기록해 보세요.</p>'}</section></div><details class="card"><summary>기록 기준</summary><p class="muted">대화 시간은 직접 입력한 값입니다. 1분 이상 기록한 일반 대화로 연속일을 계산해요. 테스트와 시간 미입력 대화는 연속일에 포함하지 않아요.</p></details>`;
 }
 
 function talkPage() {
@@ -76,7 +79,7 @@ function reportPreview() {
 
 function settingsPage() {
   const legacy=localStorage.getItem('english-basket-legacy-draft-v1');
-  return `${header('설정')}<section class="card"><form id="settings-form"><label for="chat-url">자주 쓰는 ChatGPT 채팅 주소 (선택)</label><input type="url" id="chat-url" name="chatUrl" value="${esc(state.settings.chatUrl)}" placeholder="https://chatgpt.com/"><button style="margin-top:16px" type="submit">저장</button></form></section><section class="card"><h2>내 기록</h2><div class="flex"><button class="secondary" data-action="export">백업 받기</button><label style="margin:0" for="import">백업 가져오기<input type="file" id="import" accept="application/json,.json"></label></div>${storageError?'<button class="ghost" data-action="export-raw">기존 원본 받기</button>':''}${legacy?'<details><summary>이전 미완료 대화</summary><button class="ghost" data-action="export-legacy">파일로 받기</button></details>':''}<p class="footer-note">기록은 이 브라우저에 저장됩니다.</p></section><details class="card"><summary>홈 화면에 추가</summary>${installPrompt?'<button data-action="install">앱 설치</button>':'<p class="muted">iPhone: Safari 공유 → 홈 화면에 추가<br>Android: 브라우저 메뉴 → 앱 설치</p>'}</details>`;
+  return `${header('설정')}<section class="card"><form id="settings-form"><label for="chat-url">자주 쓰는 ChatGPT 채팅 주소 (선택)</label><input type="url" id="chat-url" name="chatUrl" value="${esc(state.settings.chatUrl)}" placeholder="https://chatgpt.com/"><button style="margin-top:16px" type="submit">저장</button></form></section><section class="card"><h2>내 기록</h2><div class="flex"><button class="secondary" data-action="export">백업 받기</button><label style="margin:0" for="import">백업 가져오기<input type="file" id="import" accept="application/json,.json"></label></div>${storageError?'<button class="ghost" data-action="export-raw">기존 원본 받기</button>':''}${legacy?'<details><summary>이전 미완료 대화</summary><button class="ghost" data-action="export-legacy">파일로 받기</button></details>':''}${localStorage.getItem('english-basket-before-studio-v1')?'<button class="ghost" data-action="export-before-studio">확장 전 원본 받기</button>':''}<p class="footer-note">기록은 이 브라우저에 저장됩니다.</p></section><details class="card"><summary>홈 화면에 추가</summary>${installPrompt?'<button data-action="install">앱 설치</button>':'<p class="muted">iPhone: Safari 공유 → 홈 화면에 추가<br>Android: 브라우저 메뉴 → 앱 설치</p>'}</details>`;
 }
 
 function download(text,name,type='text/plain;charset=utf-8') {
@@ -128,6 +131,7 @@ document.addEventListener('click',async event=>{
     }
     if(action==='download-handoff')download(buildPrompt(active),`English-Basket-${day()}-${active.kind}.txt`);
     if(action==='export')download(JSON.stringify({...state,settings:{chatUrl:state.settings.chatUrl}},null,2),`english-basket-${day()}.json`,'application/json');
+    if(action==='export-before-studio')download(localStorage.getItem('english-basket-before-studio-v1'),'english-basket-before-studio.json','application/json');
     if(action==='export-raw')download(localStorage.getItem(KEY)||'{}','english-basket-original.json','application/json');
     if(action==='export-legacy')download(localStorage.getItem('english-basket-legacy-draft-v1'),'english-basket-unfinished-conversation.json','application/json');
     if(action==='install'){await installPrompt.prompt();installPrompt=null;render();}
@@ -163,10 +167,16 @@ document.addEventListener('input',event=>{
 
 document.addEventListener('change',async event=>{
   if(event.target.id!=='import')return;
-  try{const file=event.target.files[0];if(!file)return;if(file.size>5*1024*1024)throw Error('5MB 이하의 백업 파일을 선택해 주세요.');const imported=JSON.parse(await file.text()),merged=mergeState(state,imported);merged.settings={chatUrl:state.settings.chatUrl};localStorage.setItem(KEY,JSON.stringify(merged));state=merged;storageError=false;render();notify('기존 기록과 백업을 합쳤어요.');}catch(error){notify(error.message);}
+  if(!studioUI.flush())return;
+  try{const file=event.target.files[0];if(!file)return;if(file.size>5*1024*1024)throw Error('5MB 이하의 백업 파일을 선택해 주세요.');const imported=JSON.parse(await file.text()),merged=mergeState(state,imported);merged.settings={chatUrl:state.settings.chatUrl};localStorage.setItem(KEY,JSON.stringify(merged));state=merged;storageError=false;studioUI.reset();render();notify('기존 기록과 백업을 합쳤어요.');}catch(error){notify(error.message);}
 });
 
 document.addEventListener('keydown',event=>{if(event.target.matches('.step')&&['Enter',' '].includes(event.key)){event.preventDefault();event.target.click();}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;if(view==='settings')render();});
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+const studioUI=createStudioUI({getState:()=>state,changeState,render,navigate,notify,prepareTalk(w){
+  if(active&&!state.sessions.some(s=>s.id===active.id)&&!confirm('준비 중인 대화 자료를 이 작문으로 바꿀까요?'))return;
+  const selected=state.expressions.filter(e=>w.expressionIds.includes(e.id));if(!selected.length)throw Error('작문에 쓴 표현을 바구니에서 확인해 주세요.');
+  active=prepareHandoff({...state,expressions:selected});active.writingId=w.id;active.readingIds=w.readingIds;active.reviews=[{kind:'Writing Studio',prompt:w.topicPrompt,answer:(w.rewrite||w.original).slice(0,3000),day:day()}];const feedback=state.studio.evaluations.filter(e=>e.writingId===w.id).at(-1);if(feedback)active.corrections=feedback.improvements.slice(0,2).map(i=>`${i.original} → ${i.suggestion}: ${i.reason}`);report=null;persistActive();navigate('talk');
+}});
 render();if(initialWarning)notify(initialWarning);
