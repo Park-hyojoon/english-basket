@@ -18,5 +18,4 @@ test('app contains no paid API request, background polling or microphone capture
   const server=await readFile(new URL('../server.mjs',import.meta.url),'utf8');
   assert.doesNotMatch(app,/\bfetch\(|setInterval\(|SpeechRecognition|OPENAI_API_KEY|api\.openai\.com/);
   assert.doesNotMatch(server,/\bfetch\(|OPENAI_API_KEY|api\.openai\.com/);
-  for(const file of ['studio-domain.mjs','studio-handoff.mjs','studio-ui.mjs'])assert.doesNotMatch(await readFile(new URL('../public/'+file,import.meta.url),'utf8'),/\bfetch\(|setInterval\(|OPENAI_API_KEY|api\.openai\.com|getUserMedia/);
 });

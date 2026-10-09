@@ -1,13 +1,18 @@
-import {chromium,browserOptions} from './browser-runtime.mjs';
+import {createRequire} from 'node:module';
+import path from 'node:path';
+import os from 'node:os';
 import {mkdir} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {createServer} from '../server.mjs';
 import {emptyState} from '../public/domain.mjs';
+const require=createRequire(import.meta.url);
+let chromium;
+try{({chromium}=require('playwright'));}catch{({chromium}=require(process.env.BASKET_PLAYWRIGHT||path.join(os.homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')));}
 const screenshots=process.env.BASKET_SCREENSHOTS==='1';
 if(screenshots)await mkdir('outputs',{recursive:true});
 const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const base=`http://127.0.0.1:${server.address().port}`;
-const browser=await chromium.launch(browserOptions);
+const browser=await chromium.launch({channel:process.env.BASKET_BROWSER_CHANNEL||'msedge',headless:true});
 const errors=[],apiCalls=[];
 try {
   const context=await browser.newContext({viewport:{width:1280,height:900},permissions:['clipboard-read','clipboard-write']});
